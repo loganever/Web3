@@ -177,6 +177,7 @@ if __name__ == "__main__":
 
     db_config = dict(con.items('db'))
     monitor_config = dict(con.items('monitor'))
+    server_config = dict(con.items('server'))
 
     master = Master()
-    app.run(host='0.0.0.0', port=36487) #运行app
+    app.run(host='0.0.0.0', port=int(server_config['port'])) #运行app
