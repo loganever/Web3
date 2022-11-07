@@ -55,13 +55,13 @@ class Master:
             rpcs.append(i['url'])
         return {"rpc":rpcs}
 
-    def recive_data(self,data):
+    def recive_data(self,data,ip):
         self.test_conn()
         cursor = self.db.cursor()
         for key in data['result'].keys():
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text) \
-                        values('%s','%s','%d','%f','%d','%d','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"))
+            sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip) \
+                        values('%s','%s','%d','%f','%d','%d','%s','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"),ip)
             cursor.execute(sql)
         cursor.close()
         self.db.commit()
@@ -136,7 +136,8 @@ def config():
 @app.route("/recive",methods=["POST"]) 
 def recive():
     data = dict(request.json)
-    master.recive_data({"result":data['result'], "newest":data['newest']})
+    ip = request.remote_addr
+    master.recive_data({"result":data['result'], "newest":data['newest']},ip)
     return "ok"
 
 @app.route("/get_data",methods=["GET"]) 
