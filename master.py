@@ -52,7 +52,7 @@ class Master:
         cursor.close()
         rpcs = []
         for i in result:
-            rpcs.append(i['rpc'])
+            rpcs.append(i['url'])
         return {"rpc":rpcs}
 
     def recive_data(self,data):
