@@ -42,29 +42,17 @@ class Master:
             database=db_config['database'],
             charset=db_config['charset']
             )
-    
-    def get_private(self):
-        self.test_conn()
-        cursor = self.db.cursor(DictCursor)
-        sql = "SELECT * from private"
-        cursor.execute(sql)
-        result = cursor.fetchall()
-        cursor.close()
-        private = []
-        for i in result:
-            private.append({"name":i["name"], "register_url":i['register_url']})
-        return {"private rpc":private}
 
     def get_config(self):
         self.test_conn()
         cursor = self.db.cursor(DictCursor)
-        sql = "SELECT * from config"
+        sql = "SELECT * from rpc"
         cursor.execute(sql)
         result = cursor.fetchall()
         cursor.close()
         rpcs = []
         for i in result:
-            rpcs.append(i['rpc_url'])
+            rpcs.append(i['rpc'])
         return {"rpc":rpcs}
 
     def recive_data(self,data):
@@ -83,7 +71,7 @@ class Master:
         self.test_conn()
         cursor = self.db.cursor()
         # 获取7天内数据
-        sql = "SELECT * from detect where DATE_SUB(CURDATE(),INTERVAL 14 DAY )<= date(detect_time) ORDER BY rpc_url,detect_time DESC "
+        sql = "SELECT detect.rpc_url,detect.detect_time,detect.result,rpc.type,rpc.register,rpc.name from detect,rpc where DATE_SUB(CURDATE(),INTERVAL 7 DAY )<= date(detect_time) and rpc_url=url ORDER BY rpc_url,detect_time DESC"
         cursor.execute(sql)
         result = cursor.fetchall()
         cursor.close()
@@ -91,14 +79,14 @@ class Master:
         for i in result:
             if i[0] not in record.keys():
                 record[i[0]] = []
-            record[i[0]].append({"result":i[2],"time":i[1]})
+            record[i[0]].append({"result":i[2],"time":i[1],"type":i[3],"register":i[4],"name":i[5]})
         # 监测数据转化为颜色等级
         now_time = time.strftime('%Y-%m-%d %H:%M:%S')
         now_time_struct = datetime.datetime.strptime(now_time, "%Y-%m-%d %H:%M:%S")
         color = {}
         for i in record.keys():
             if i not in color.keys():
-                color[i] = []
+                color[i] = {"color":[],"type":record[i][0]["type"],"register":record[i][0]["register"],"name":record[i][0]["name"]}
             sum = 0     # 失败的次数
             all = 0     # 总监测的次数
             last_block = -1
@@ -111,19 +99,19 @@ class Master:
                 if last_block==-1:
                     last_block = time_block
                 elif last_block!=time_block or j==len(record[i])-1:
-                    if sum<=int(self.green*all):     
-                        color[i].append('green')
+                    if sum<=int(self.green*all):
+                        color[i]["color"].append('green')
                     elif sum<=int(self.yellow*all):
-                        color[i].append('yellow')
+                        color[i]["color"].append('yellow')
                     else:
-                        color[i].append('red')
+                        color[i]["color"].append('red')
                     sum = 0
                     all = 0
-                    if len(color[i])==num:  #数量够了
+                    if len(color[i]["color"])==num:  #数量够了
                         break
                 last_block = time_block
-            if len(color[i])<num:          # 监测数据不足则填充null
-                color[i].extend(['null']*(num-len(color[i])))
+            if len(color[i]["color"])<num:          # 监测数据不足则填充null
+                color[i]["color"].extend(['null']*(num-len(color[i]["color"])))
         return color
 
     # 增加rpc节点
@@ -144,10 +132,6 @@ app = Flask(__name__)
 @app.route("/config",methods=["GET"])
 def config(): 
     return master.get_config()
-
-@app.route("/private",methods=["GET"])
-def private(): 
-    return master.get_private()
  
 @app.route("/recive",methods=["POST"]) 
 def recive():
@@ -157,13 +141,23 @@ def recive():
 
 @app.route("/get_data",methods=["GET"]) 
 def get_data():
-    num = request.args.get('num')
-    return master.get_data(int(num))
+    try:
+        num = request.args.get('num')
+        color = master.get_data(int(num))
+        data =[]
+        for key in color:
+            if color[key]['type']=='private':
+                data.append({"url":color[key]['name'],"type":color[key]['type'],"register":color[key]['register'],"name":color[key]['name'],"detect":color[key]['color']})
+            else:
+                data.append({"url":key,"type":color[key]['type'],"name":color[key]['name'],"detect":color[key]['color']})
+        return {"status":"ok","data":data}
+    except:
+        return {"status":"fail"}
 
-@app.route("/add_rpc",methods=["POST"])
-def add_rpc():
-    master.add_rpc(json.loads(request.data.decode())['rpcs'])
-    return "ok"
+# @app.route("/add_rpc",methods=["POST"])
+# def add_rpc():
+#     master.add_rpc(json.loads(request.data.decode())['rpcs'])
+#     return "ok"
  
 if __name__ == "__main__":
     parser = OptionParser()
