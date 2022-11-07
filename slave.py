@@ -1,0 +1,85 @@
+import grequests
+import requests
+import json
+import time
+import datetime
+from optparse import OptionParser
+import logging
+
+# 日志设置
+logging.basicConfig(filename='slave_log.txt', level=logging.INFO, format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
+
+class Slave:
+
+    def __init__(self,master_node_url):
+        self.master_node_url = master_node_url
+        self.req_list = self.build_requests()
+        self.result = {}
+        self.newest = 0
+
+    # 设置grequests请求列表
+    def build_requests(self):
+        rpc_nodes = json.loads(requests.get(self.master_node_url+'/config').text.strip())['rpc']
+        headers = {'Content-type': 'application/json'}
+        payload = [{"jsonrpc": "2.0",
+                "method": "eth_blockNumber",
+                "params": [],
+                "id": 1},
+                {"jsonrpc":"2.0","id":2,"method":"eth_call","params":[
+                    {"to":"0xeefBa1e63905eF1D7ACbA5a8513c70307C1cE441",
+                    "data":"0x252dba42000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"},
+                    "latest"]}]
+        req_list = []
+        for url in rpc_nodes:
+            req_list.append(grequests.post(url, json=payload, headers=headers,timeout=3))
+        return req_list
+
+    # 请求错误处理
+    def err_handler(self,request, exception):
+        self.result[request.url] = {"text":str(exception)}
+
+    # 获得区块号
+    def get_block_num(self):
+        self.result = {}
+        self.newest = 0
+        # 获得所有请求结果
+        res_list = grequests.map(self.req_list, exception_handler=self.err_handler)
+        for res,req in zip(res_list,self.req_list):
+            try:
+                resp = json.loads(res.text.strip())        
+                infura_block_number = int(resp[0]['result'],16)   # 结果16进制转10进制
+                evm_block_numbser = int(resp[1]['result'][60:66],16)          #获得evm返回的区块号
+                self.result[req.url] = {"block":max(infura_block_number,evm_block_numbser),"elapse":res.elapsed.total_seconds(),
+                "status_code":res.status_code,"headers":str(res.headers),"text":res.text.strip()}
+                self.newest = max(self.newest,self.result[req.url]['block'])
+            except Exception as e:
+                if res!=None:
+                    self.result[req.url] = {"block":-1,"elapse":res.elapsed.total_seconds(),"status_code":res.status_code,"headers":str(res.headers),"text":res.text.strip()}
+                else:
+                    self.result[req.url]["block"] = -1
+                    self.result[req.url]["elapse"] = 0.0
+                    self.result[req.url]["status_code"] = -1
+                    self.result[req.url]["headers"] = ""
+        return self.result
+
+    def post_to_master(self):
+        try:
+            data = {"result":self.result, "newest":self.newest}
+            requests.post(self.master_node_url+'/recive', json=data,timeout=5)
+        except Exception as e:
+            logging.info("post error")
+
+
+if __name__=="__main__":
+    parser = OptionParser()
+
+    parser.add_option("-H", "--host", help="Master节点ip端口")
+    parser.add_option("-t", "--time", help="监测时间间隔")
+    (options, args) = parser.parse_args()
+
+    slave = Slave(options.host)
+    time_len = int(options.time)
+    while True:
+        result = slave.get_block_num()
+        slave.post_to_master()
+        time.sleep(time_len)
