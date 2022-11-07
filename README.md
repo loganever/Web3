@@ -7,7 +7,7 @@ flask
 
 
 # 启动方式
-master节点启动方式 nohup python master.py -c config文件位置
+master节点启动方式 nohup python master.py -c config文件位置 &
 
 slave节点启动方式 nohup python slave.py -H http://ip:port -t 监测时间间隔(秒) &
 
