@@ -23,7 +23,7 @@ class Master:
             database=db_config['database'],
             charset=db_config['charset']
             )
-        self.yello = float(monitor_config['yellow'])       
+        self.yellow = float(monitor_config['yellow'])       
         self.green = float(monitor_config['green'])              
         self.block_time_len = int(monitor_config['block_len'])    
 
@@ -113,8 +113,8 @@ class Master:
                 elif last_block!=time_block or j==len(record[i])-1:
                     if sum<=int(self.green*all):     
                         color[i].append('green')
-                    elif sum<=int(self.yello*all):
-                        color[i].append('yello')
+                    elif sum<=int(self.yellow*all):
+                        color[i].append('yellow')
                     else:
                         color[i].append('red')
                     sum = 0
