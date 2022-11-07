@@ -35,12 +35,12 @@ class Master:
          self.db.ping()
      except:    # 断开则重连
          self.db = pymysql.connect(
-            host="db", 
-            port=3306,
-            user='logan',
-            password='3C~p()d6DYXQJFr@',
-            database='rpcmonitor',
-            charset='utf8'
+            host=db_config['host'], 
+            port=int(db_config['port']),
+            user=db_config['user'],
+            password=db_config['password'],
+            database=db_config['database'],
+            charset=db_config['charset']
             )
     
     def get_private(self):
