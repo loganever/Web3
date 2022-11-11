@@ -4,6 +4,7 @@ grequests
 # master需要安装的python库
 pymysql
 flask
+DBUtils==1.3
 
 
 # 启动方式
