@@ -6,7 +6,10 @@ import time
 from pymysql.cursors import DictCursor
 from flask import Flask, request
 import configparser
+import traceback
 from optparse import OptionParser
+from DBUtils.PooledDB import PooledDB, SharedDBConnection
+from functools import lru_cache
 
 # 日志设置
 logging.basicConfig(filename='master_log.txt', level=logging.INFO, format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
@@ -15,114 +18,114 @@ logging.basicConfig(filename='master_log.txt', level=logging.INFO, format='%(asc
 class Master:
 
     def __init__(self):
-        self.db = pymysql.connect(
-            host=db_config['host'], 
+        self.db_pool = PooledDB(creator=pymysql,
+            maxconnections=0,  # 连接池允许的最大连接数，0和None表示不限制连接数
+            mincached=3,  # 初始化时，链接池中至少创建的空闲的链接，0表示不创建
+            maxcached=0,  # 链接池中最多闲置的链接，0和None不限制
+            maxshared=1,  # 链接池中最多共享的链接数量，0和None表示全部共享
+            blocking=True,  # 连接池中如果没有可用连接后，是否阻塞等待。True，等待；False，不等待然后报错
+            maxusage=None,  # 一个链接最多被重复使用的次数，None表示无限制
+            ping=0,
+            # ping MySQL服务端，检查是否服务可用。
+            # 如：0 = None = never,
+            # 1 = default = whenever it is requested,
+            # 2 = when a cursor is created,
+            # 4 = when a query is executed,
+            # 7 = always
+            host=db_config['host'],
             port=int(db_config['port']),
             user=db_config['user'],
             password=db_config['password'],
             database=db_config['database'],
             charset=db_config['charset']
-            )
+        )
         self.yellow = float(monitor_config['yellow'])       
         self.green = float(monitor_config['green'])              
         self.block_time_len = int(monitor_config['block_len'])    
 
-    def __del__(self):
-        self.db.close()
-
-    def test_conn(self):
-     try:       # 检查数据库连接是否断开
-         self.db.ping()
-     except:    # 断开则重连
-         self.db = pymysql.connect(
-            host=db_config['host'], 
-            port=int(db_config['port']),
-            user=db_config['user'],
-            password=db_config['password'],
-            database=db_config['database'],
-            charset=db_config['charset']
-            )
-
     def get_config(self):
-        self.test_conn()
-        cursor = self.db.cursor(DictCursor)
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
         sql = "SELECT * from rpc"
         cursor.execute(sql)
         result = cursor.fetchall()
-        cursor.close()
+        conn.close()
         rpcs = []
         for i in result:
-            rpcs.append(i['url'])
+            rpcs.append(i[0])
         return {"rpc":rpcs}
 
     def recive_data(self,data,ip):
-        self.test_conn()
-        cursor = self.db.cursor()
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
         for key in data['result'].keys():
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip) \
                         values('%s','%s','%d','%f','%d','%d','%s','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"),ip)
             cursor.execute(sql)
-        cursor.close()
-        self.db.commit()
+        conn.commit()
+        conn.close()
 
     # 获取所有节点最近num个时间区块的监测结果
     def get_data(self,num):
-        self.test_conn()
-        cursor = self.db.cursor()
-        # 获取7天内数据
-        sql = "SELECT detect.rpc_url,detect.detect_time,detect.result,rpc.type,rpc.register,rpc.name from detect,rpc where DATE_SUB(CURDATE(),INTERVAL 7 DAY )<= date(detect_time) and rpc_url=url ORDER BY rpc_url,detect_time DESC"
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
+        # 获取数据
+        sql = "SELECT rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by rpc_url, h, result order by rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
-        cursor.close()
-        record = {}
+        rpc_sql = "SELECT url,type,register,name from rpc"
+        cursor.execute(rpc_sql)
+        rpcresult = cursor.fetchall()
+        conn.close()
+
+        info = {}
+        for i in rpcresult:
+            info[i[0]] = {"type":i[1],"register":i[2],"name":i[3]}
+        data = {}
+        zero_cnt = 0
         for i in result:
-            if i[0] not in record.keys():
-                record[i[0]] = []
-            record[i[0]].append({"result":i[2],"time":i[1],"type":i[3],"register":i[4],"name":i[5]})
-        # 监测数据转化为颜色等级
-        now_time = time.strftime('%Y-%m-%d %H:%M:%S')
-        now_time_struct = datetime.datetime.strptime(now_time, "%Y-%m-%d %H:%M:%S")
-        color = {}
-        for i in record.keys():
-            if i not in color.keys():
-                color[i] = {"color":[],"type":record[i][0]["type"],"register":record[i][0]["register"],"name":record[i][0]["name"]}
-            sum = 0     # 失败的次数
-            all = 0     # 总监测的次数
-            last_block = -1
-            for j in range(len(record[i])):
-                seconds = (now_time_struct-datetime.datetime.strptime(str(record[i][j]["time"]), "%Y-%m-%d %H:%M:%S")).total_seconds()
-                time_block = int(seconds/self.block_time_len)
-                if record[i][j]["result"]==0:
-                    sum+=1
-                all+=1
-                if last_block==-1:
-                    last_block = time_block
-                elif last_block!=time_block or j==len(record[i])-1:
-                    if sum<=int(self.green*all):
-                        color[i]["color"].append('green')
-                    elif sum<=int(self.yellow*all):
-                        color[i]["color"].append('yellow')
-                    else:
-                        color[i]["color"].append('red')
-                    sum = 0
-                    all = 0
-                    if len(color[i]["color"])==num:  #数量够了
-                        break
-                last_block = time_block
-            if len(color[i]["color"])<num:          # 监测数据不足则填充null
-                color[i]["color"].extend(['null']*(num-len(color[i]["color"])))
-        return color
+            if i[0] not in info.keys():
+                continue
+            if i[0] not in data.keys():
+                data[i[0]] = {}
+                if info[i[0]]["type"]=='private':
+                    data[i[0]] ["type"] = info[i[0]]["type"]
+                    data[i[0]] ["register"] = info[i[0]]["register"]
+                    data[i[0]] ["name"] = info[i[0]]["name"]
+                else:
+                    data[i[0]] ["type"] = info[i[0]]["type"]
+                    data[i[0]] ["name"] = info[i[0]]["name"]
+                data[i[0]]["color"] = []
+            if len(data[i[0]]["color"])>=num:
+                continue
+            if i[2]==0:
+                if zero_cnt!=-1:
+                    data[i[0]]["color"].append('red')
+                else:
+                    zero_cnt = i[3]
+            else:
+                if zero_cnt/(zero_cnt+i[3])<=self.green:
+                    data[i[0]]["color"].append('green')
+                elif zero_cnt/(zero_cnt+i[3])<=self.yellow:
+                    data[i[0]]["color"].append('yellow')
+                else:
+                    data[i[0]]["color"].append('red')
+                zero_cnt = -1
+        for i in data:
+            if len(data[i]["color"])<num:          # 监测数据不足则填充null
+                data[i]["color"].extend(['null']*(num-len(data[i]["color"])))
+        return data
 
     # 增加rpc节点
-    def add_rpc(self,rpcs):
-        self.test_conn()
-        cursor = self.db.cursor()
-        for url in rpcs:
-            sql = "insert into config(rpc_url) values('%s')" % (url)
-            cursor.execute(sql)
-        cursor.close()
-        self.db.commit()
+    # def add_rpc(self,rpcs):
+    #     self.test_conn()
+    #     cursor = self.db.cursor()
+    #     for url in rpcs:
+    #         sql = "insert into config(rpc_url) values('%s')" % (url)
+    #         cursor.execute(sql)
+    #     cursor.close()
+    #     self.db.commit()
 
 
 
@@ -140,8 +143,9 @@ def recive():
     master.recive_data({"result":data['result'], "newest":data['newest']},ip)
     return "ok"
 
-@app.route("/get_data",methods=["GET"]) 
-def get_data():
+@lru_cache()
+def real_get_data(_ts):
+    logging.info("query database data")
     try:
         num = request.args.get('num')
         color = master.get_data(int(num))
@@ -152,8 +156,13 @@ def get_data():
             else:
                 data.append({"url":key,"type":color[key]['type'],"name":color[key]['name'],"detect":color[key]['color']})
         return {"status":"ok","data":data}
-    except:
+    except Exception as err:
+        logging.info(traceback.format_exc())
         return {"status":"fail"}
+
+@app.route("/get_data",methods=["GET"]) 
+def get_data():
+    return real_get_data(int(time.time())/600)
 
 # @app.route("/add_rpc",methods=["POST"])
 # def add_rpc():
