@@ -67,7 +67,9 @@ class Master:
         conn.close()
 
     # 获取所有节点最近num个时间区块的监测结果
-    def get_data(self,num):
+    @lru_cache
+    def get_data(self,num,_ts):
+        logging.info("query database data")
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         # 获取数据
@@ -143,12 +145,11 @@ def recive():
     master.recive_data({"result":data['result'], "newest":data['newest']},ip)
     return "ok"
 
-@lru_cache()
-def real_get_data(_ts):
-    logging.info("query database data")
+@app.route("/get_data",methods=["GET"]) 
+def get_data():
     try:
         num = request.args.get('num')
-        color = master.get_data(int(num))
+        color = master.get_data(int(num),int(int(time.time())/600))
         data =[]
         for key in color:
             if color[key]['type']=='private':
@@ -159,10 +160,6 @@ def real_get_data(_ts):
     except Exception as err:
         logging.info(traceback.format_exc())
         return {"status":"fail"}
-
-@app.route("/get_data",methods=["GET"]) 
-def get_data():
-    return real_get_data(int(time.time())/600)
 
 # @app.route("/add_rpc",methods=["POST"])
 # def add_rpc():
