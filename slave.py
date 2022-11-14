@@ -11,15 +11,20 @@ logging.basicConfig(filename='slave_log.txt', level=logging.INFO, format='%(asct
 
 class Slave:
 
-    def __init__(self,master_node_url):
+    def __init__(self,master_node_url, node_name):
         self.master_node_url = master_node_url
+        self.node_name = node_name
         self.req_list = self.build_requests()
         self.result = {}
         self.newest = 0
+        self.detect_time = 0
+        self.version = 0
 
     # 设置grequests请求列表
     def build_requests(self):
-        rpc_nodes = json.loads(requests.get(self.master_node_url+'/config').text.strip())['rpc']
+        result = json.loads(requests.get(self.master_node_url+'/config').text.strip())
+        rpc_nodes = result['rpc']
+        self.version = result['version']
         headers = {'Content-type': 'application/json'}
         payload = [{"jsonrpc": "2.0",
                 "method": "eth_blockNumber",
@@ -40,6 +45,10 @@ class Slave:
 
     # 获得区块号
     def get_block_num(self):
+        self.detect_time+=1
+        # 每请求10次重新获取一次配置
+        if self.detect_time%10==0:
+            self.req_list = self.build_requests()
         self.result = {}
         self.newest = 0
         # 获得所有请求结果
@@ -64,8 +73,9 @@ class Slave:
 
     def post_to_master(self):
         try:
-            data = {"result":self.result, "newest":self.newest}
-            requests.post(self.master_node_url+'/recive', json=data,timeout=5)
+            data = {"result":self.result, "newest":self.newest, "node_name":self.node_name}
+            headers = {'content-type': "application/json", 'version': str(self.version)}
+            requests.post(self.master_node_url+'/recive', json=data, timeout=5, headers = headers)
         except Exception as e:
             logging.info("post error")
 
@@ -75,9 +85,10 @@ if __name__=="__main__":
 
     parser.add_option("-H", "--host", help="Master节点ip端口")
     parser.add_option("-t", "--time", help="监测时间间隔")
+    parser.add_option("-n", "--name", help="slave节点名称")
     (options, args) = parser.parse_args()
 
-    slave = Slave(options.host)
+    slave = Slave(options.host, options.name)
     time_len = int(options.time)
     while True:
         result = slave.get_block_num()
