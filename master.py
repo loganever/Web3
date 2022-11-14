@@ -41,7 +41,19 @@ class Master:
         )
         self.yellow = float(monitor_config['yellow'])       
         self.green = float(monitor_config['green'])              
-        self.block_time_len = int(monitor_config['block_len'])    
+        self.block_time_len = int(monitor_config['block_len'])   
+        self.version = 0 
+        self.last_clean = time.time()
+        self.clean_time = int(monitor_config['clean_time']) 
+
+    def clean(self):
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
+        sql = "delete from detect where detect_time < curdate()  - INTERVAL 5 day"
+        cursor.execute(sql)
+        conn.commit()
+        conn.close()
+        self.last_clean = time.time()
 
     def get_config(self):
         conn = self.db_pool.connection()
@@ -50,10 +62,12 @@ class Master:
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
+        if time.time()-self.last_clean > self.clean_time:
+            self.clean()
         rpcs = []
         for i in result:
             rpcs.append(i[0])
-        return {"rpc":rpcs}
+        return {"rpc":rpcs, "version": str(self.version)}
 
     def recive_data(self,data,ip):
         conn = self.db_pool.connection()
@@ -67,7 +81,7 @@ class Master:
         conn.close()
 
     # 获取所有节点最近num个时间区块的监测结果
-    @lru_cache
+    @lru_cache()
     def get_data(self,num,_ts):
         logging.info("query database data")
         conn = self.db_pool.connection()
@@ -85,7 +99,8 @@ class Master:
         for i in rpcresult:
             info[i[0]] = {"type":i[1],"register":i[2],"name":i[3]}
         data = {}
-        zero_cnt = 0
+        zero_cnt = -1
+        last_url = ''
         for i in result:
             if i[0] not in info.keys():
                 continue
@@ -101,11 +116,14 @@ class Master:
                 data[i[0]]["color"] = []
             if len(data[i[0]]["color"])>=num:
                 continue
+            # 防止全red的情况漏一个
+            if last_url!=i[0] and zero_cnt!=-1:
+                data[last_url]["color"].append('red')
+            last_url = i[0]
             if i[2]==0:
                 if zero_cnt!=-1:
                     data[i[0]]["color"].append('red')
-                else:
-                    zero_cnt = i[3]
+                zero_cnt = i[3]
             else:
                 if zero_cnt/(zero_cnt+i[3])<=self.green:
                     data[i[0]]["color"].append('green')
@@ -141,6 +159,9 @@ def config():
 @app.route("/recive",methods=["POST"]) 
 def recive():
     data = dict(request.json)
+
+    logging.info("node name:"+data['node_name'])
+
     ip = request.remote_addr
     master.recive_data({"result":data['result'], "newest":data['newest']},ip)
     return "ok"
@@ -153,7 +174,7 @@ def get_data():
         data =[]
         for key in color:
             if color[key]['type']=='private':
-                data.append({"url":color[key]['name'],"type":color[key]['type'],"register":color[key]['register'],"name":color[key]['name'],"detect":color[key]['color']})
+                data.append({"url":key,"type":color[key]['type'],"register":color[key]['register'],"name":color[key]['name'],"detect":color[key]['color']})
             else:
                 data.append({"url":key,"type":color[key]['type'],"name":color[key]['name'],"detect":color[key]['color']})
         return {"status":"ok","data":data}
