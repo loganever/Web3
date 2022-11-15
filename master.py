@@ -42,7 +42,7 @@ class Master:
         self.yellow = float(monitor_config['yellow'])       
         self.green = float(monitor_config['green'])              
         self.block_time_len = int(monitor_config['block_len'])   
-        self.version = 0 
+        self.version = 0
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
 
@@ -62,12 +62,25 @@ class Master:
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
+        # 清理表
         if time.time()-self.last_clean > self.clean_time:
             self.clean()
         rpcs = []
         for i in result:
             rpcs.append(i[0])
         return {"rpc":rpcs, "version": str(self.version)}
+
+    def get_private(self):
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
+        sql = "SELECT url,register,name,location,free,price,support,main_use from rpc where type='private'"
+        cursor.execute(sql)
+        result = cursor.fetchall()
+        conn.close()
+        data = []
+        for i in result:
+            data.append({"url":i[0],"register":i[1],"name":i[2],"location":i[3],"free":i[4],"price":i[5],"support":i[6],"main_use":i[7]})
+        return data
 
     def recive_data(self,data,ip):
         conn = self.db_pool.connection()
@@ -90,14 +103,14 @@ class Master:
         sql = "SELECT rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by rpc_url, h, result order by rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
-        rpc_sql = "SELECT url,type,register,name from rpc"
+        rpc_sql = "SELECT url,type,register,name,location from rpc"
         cursor.execute(rpc_sql)
         rpcresult = cursor.fetchall()
         conn.close()
 
         info = {}
         for i in rpcresult:
-            info[i[0]] = {"type":i[1],"register":i[2],"name":i[3]}
+            info[i[0]] = {"type":i[1],"register":i[2],"name":i[3],"location":i[4]}
         data = {}
         zero_cnt = -1
         last_url = ''
@@ -107,12 +120,10 @@ class Master:
             if i[0] not in data.keys():
                 data[i[0]] = {}
                 if info[i[0]]["type"]=='private':
-                    data[i[0]] ["type"] = info[i[0]]["type"]
                     data[i[0]] ["register"] = info[i[0]]["register"]
-                    data[i[0]] ["name"] = info[i[0]]["name"]
-                else:
-                    data[i[0]] ["type"] = info[i[0]]["type"]
-                    data[i[0]] ["name"] = info[i[0]]["name"]
+                data[i[0]] ["type"] = info[i[0]]["type"]
+                data[i[0]] ["name"] = info[i[0]]["name"]
+                data[i[0]] ["location"] = info[i[0]]["location"]
                 data[i[0]]["color"] = []
             if len(data[i[0]]["color"])>=num:
                 continue
@@ -120,6 +131,7 @@ class Master:
             if last_url!=i[0] and zero_cnt!=-1:
                 data[last_url]["color"].append('red')
             last_url = i[0]
+            # 判断红黄绿
             if i[2]==0:
                 if zero_cnt!=-1:
                     data[i[0]]["color"].append('red')
@@ -136,18 +148,6 @@ class Master:
             if len(data[i]["color"])<num:          # 监测数据不足则填充null
                 data[i]["color"].extend(['null']*(num-len(data[i]["color"])))
         return data
-
-    # 增加rpc节点
-    # def add_rpc(self,rpcs):
-    #     self.test_conn()
-    #     cursor = self.db.cursor()
-    #     for url in rpcs:
-    #         sql = "insert into config(rpc_url) values('%s')" % (url)
-    #         cursor.execute(sql)
-    #     cursor.close()
-    #     self.db.commit()
-
-
 
  
 app = Flask(__name__)
@@ -174,10 +174,18 @@ def get_data():
         data =[]
         for key in color:
             if color[key]['type']=='private':
-                data.append({"url":key,"type":color[key]['type'],"register":color[key]['register'],"name":color[key]['name'],"detect":color[key]['color']})
+                data.append({"url":key,"type":color[key]['type'],"register":color[key]['register'],"name":color[key]['name'],"location":color[key]['location'],"detect":color[key]['color']})
             else:
-                data.append({"url":key,"type":color[key]['type'],"name":color[key]['name'],"detect":color[key]['color']})
+                data.append({"url":key,"type":color[key]['type'],"name":color[key]['name'],"location":color[key]['location'],"detect":color[key]['color']})
         return {"status":"ok","data":data}
+    except Exception as err:
+        logging.info(traceback.format_exc())
+        return {"status":"fail"}
+
+@app.route("/get_private",methods=["GET"]) 
+def get_private():
+    try:
+        return {"status":"ok","data":master.get_private()}
     except Exception as err:
         logging.info(traceback.format_exc())
         return {"status":"fail"}
