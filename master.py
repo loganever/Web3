@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*- 
 import pymysql
 import logging
 import json
@@ -68,7 +69,7 @@ class Master:
         rpcs = []
         for i in result:
             rpcs.append(i[0])
-        return {"rpc":rpcs, "version": str(self.version)}
+        return {"rpc":rpcs, "version": self.version}
 
     def get_private(self):
         conn = self.db_pool.connection()
@@ -159,12 +160,9 @@ def config():
 @app.route("/recive",methods=["POST"]) 
 def recive():
     data = dict(request.json)
-
-    logging.info("node name:"+data['node_name'])
-
     ip = request.remote_addr
     master.recive_data({"result":data['result'], "newest":data['newest']},ip)
-    return "ok"
+    return {"status":"ok","version":master.version}
 
 @app.route("/get_data",methods=["GET"]) 
 def get_data():
