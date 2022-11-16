@@ -1,3 +1,4 @@
+# -*- coding: UTF-8 -*- 
 import grequests
 import requests
 import json
@@ -17,7 +18,6 @@ class Slave:
         self.req_list = self.build_requests()
         self.result = {}
         self.newest = 0
-        self.detect_time = 0
         self.version = 0
 
     # 设置grequests请求列表
@@ -45,10 +45,6 @@ class Slave:
 
     # 获得区块号
     def get_block_num(self):
-        self.detect_time+=1
-        # 每请求10次重新获取一次配置
-        if self.detect_time%10==0:
-            self.req_list = self.build_requests()
         self.result = {}
         self.newest = 0
         # 获得所有请求结果
@@ -74,8 +70,10 @@ class Slave:
     def post_to_master(self):
         try:
             data = {"result":self.result, "newest":self.newest, "node_name":self.node_name}
-            headers = {'content-type': "application/json", 'version': str(self.version)}
-            requests.post(self.master_node_url+'/recive', json=data, timeout=5, headers = headers)
+            headers = {'content-type': "application/json"}
+            response = requests.post(self.master_node_url+'/recive', json=data, timeout=5, headers = headers)
+            if json.loads(response.text)['version']!=self.version:
+                self.req_list = self.build_requests()
         except Exception as e:
             logging.info("post error")
 
