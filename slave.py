@@ -71,7 +71,6 @@ class Slave:
         try:
             data = {"result":self.result, "newest":self.newest[chain], "node_name":self.node_name}
             headers = {'content-type': "application/json"}
-            logging.info(data)
             response = requests.post(self.master_node_url+'/recive', json=data, timeout=5, headers = headers)
             result = json.loads(response.text)
             if result['code_version']!=self.code_version:
