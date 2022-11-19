@@ -54,7 +54,7 @@ class Slave:
                 infura_block_number = int(resp[0]['result'],16)   # 结果16进制转10进制
                 # evm_block_numbser = int(resp[1]['result'][60:66],16)          #获得evm返回的区块号
                 self.result[req.url] = {"block":infura_block_number,"elapse":res.elapsed.total_seconds(),
-                "status_code":res.status_code,"headers":str(res.headers),"text":res.text.strip()}
+                "status_code":res.status_code,"headers":str(res.headers),"text":res.text.strip(),"chain":chain}
                 self.newest[chain] = max(self.newest[chain],self.result[req.url]['block'])
             except Exception as e:
                 if res!=None:
@@ -71,6 +71,7 @@ class Slave:
         try:
             data = {"result":self.result, "newest":self.newest[chain], "node_name":self.node_name}
             headers = {'content-type': "application/json"}
+            logging.info(data)
             response = requests.post(self.master_node_url+'/recive', json=data, timeout=5, headers = headers)
             result = json.loads(response.text)
             if result['code_version']!=self.code_version:
