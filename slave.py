@@ -1,4 +1,3 @@
-# -*- coding: UTF-8 -*- 
 import grequests
 import requests
 import json
@@ -6,6 +5,7 @@ import time
 import datetime
 from optparse import OptionParser
 import logging
+from multiprocessing import Process 
 
 # 日志设置
 logging.basicConfig(filename='slave_log.txt', level=logging.INFO, format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
@@ -18,13 +18,15 @@ class Slave:
         self.req_list = self.build_requests()
         self.result = {}
         self.newest = 0
-        self.version = 0
+        self.rpc_version = 0
+        self.code_version = 0
+        self.reload_flag = False
 
     # 设置grequests请求列表
     def build_requests(self):
         result = json.loads(requests.get(self.master_node_url+'/config').text.strip())
         rpc_nodes = result['rpc']
-        self.version = result['version']
+        self.rpc_version = result['rpc_version']
         headers = {'Content-type': 'application/json'}
         payload = [{"jsonrpc": "2.0",
                 "method": "eth_blockNumber",
@@ -72,23 +74,10 @@ class Slave:
             data = {"result":self.result, "newest":self.newest, "node_name":self.node_name}
             headers = {'content-type': "application/json"}
             response = requests.post(self.master_node_url+'/recive', json=data, timeout=5, headers = headers)
-            if json.loads(response.text)['version']!=self.version:
+            result = json.loads(response.text)
+            if result['code_version']!=self.code_version:
+                self.reload_flag = True
+            if result['rpc_version']!=self.rpc_version:
                 self.req_list = self.build_requests()
         except Exception as e:
             logging.info("post error")
-
-
-if __name__=="__main__":
-    parser = OptionParser()
-
-    parser.add_option("-H", "--host", help="Master节点ip端口")
-    parser.add_option("-t", "--time", help="监测时间间隔")
-    parser.add_option("-n", "--name", help="slave节点名称")
-    (options, args) = parser.parse_args()
-
-    slave = Slave(options.host, options.name)
-    time_len = int(options.time)
-    while True:
-        result = slave.get_block_num()
-        slave.post_to_master()
-        time.sleep(time_len)
