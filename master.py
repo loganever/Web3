@@ -70,16 +70,18 @@ class Master:
     def get_config(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "SELECT url,chain from rpc"
+        sql = "SELECT rpc.url,rpc.chain,payload.payload from rpc,payload where rpc.chain=payload.chain"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
         rpcs = []
         chains = []
+        payloads = []
         for i in result:
             rpcs.append(i[0])
             chains.append(i[1])
-        return {"rpc":rpcs,"chain":chains, "rpc_version": self.rpc_version, "code_version":self.code_version}
+            payloads.append(i[2])
+        return {"rpc":rpcs,"chain":chains,"payload":payloads,"rpc_version": self.rpc_version, "code_version":self.code_version}
 
     def get_private(self):
         conn = self.db_pool.connection()
@@ -168,7 +170,7 @@ class Master:
                     zero_cnt = 0
                 data[i[0]][i[1]]["detect"].append(round(zero_cnt/(zero_cnt+i[4]),4))
                 zero_cnt = -1
-                
+
         if zero_cnt!=-1:
             data[last_chain][last_url]["detect"].append(1.0)
 
