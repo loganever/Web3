@@ -35,7 +35,7 @@ class Slave:
         for i in range(len(rpc_nodes)):
             if chains[i] not in req_list.keys():
                 req_list[chains[i]] = [] 
-            req_list[chains[i]].append(grequests.post(rpc_nodes[i], json=[json.loads(payloads[i])], headers=headers,timeout=3))
+            req_list[chains[i]].append(grequests.post(rpc_nodes[i], json=json.loads(payloads[i]), headers=headers,timeout=3))
         return req_list
 
     # 请求错误处理
