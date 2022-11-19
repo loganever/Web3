@@ -13,15 +13,18 @@ if __name__=="__main__":
     parser = OptionParser()
 
     parser.add_option("-H", "--host", help="Master节点ip端口")
-    parser.add_option("-t", "--time", help="监测时间间隔")
+    parser.add_option("-t", "--time", help="总监测时间间隔")
     parser.add_option("-n", "--name", help="slave节点名称")
     (options, args) = parser.parse_args()
+    time_len = int(options.time)
 
     slave_node = slave.Slave(options.host, options.name)
-    time_len = int(options.time)
+    chains = []
+    for chain in slave_node.req_list.keys():
+        chains.append(chain)
     while True:
-        result = slave_node.get_block_num()
-        slave_node.post_to_master()
+        for chain in chains:
+            slave_node.detect(chain)
         if slave_node.reload_flag:
             try:
                 logging.info(options.name+" reload begin")
@@ -30,6 +33,9 @@ if __name__=="__main__":
                     f.write(code)
                 reload(slave)
                 slave_node = slave.Slave(options.host, options.name)
+                chains = []
+                for chain in slave_node.req_list.keys():
+                    chains.append(chain)
                 logging.info(options.name+" reload success")
             except Exception as e:
                 logging.error(e)
