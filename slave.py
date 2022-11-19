@@ -13,13 +13,14 @@ logging.basicConfig(filename='slave_log.txt', level=logging.INFO, format='%(asct
 class Slave:
 
     def __init__(self,master_node_url, node_name):
+        logging.info("new test")
         self.master_node_url = master_node_url
         self.node_name = node_name
+        self.rpc_version = 0
+        self.code_version = 0
         self.req_list = self.build_requests()
         self.result = {}
         self.newest = 0
-        self.rpc_version = 0
-        self.code_version = 0
         self.reload_flag = False
 
     # 设置grequests请求列表
@@ -27,6 +28,7 @@ class Slave:
         result = json.loads(requests.get(self.master_node_url+'/config').text.strip())
         rpc_nodes = result['rpc']
         self.rpc_version = result['rpc_version']
+        self.code_version = result['code_version']
         headers = {'Content-type': 'application/json'}
         payload = [{"jsonrpc": "2.0",
                 "method": "eth_blockNumber",
