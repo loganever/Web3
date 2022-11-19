@@ -8,9 +8,9 @@ DBUtils==1.3
 
 
 # 启动方式
-master节点启动方式 nohup python master.py -c config文件位置 &
+master节点启动方式 nohup python3 master.py -c config文件位置 &
 
-slave节点启动方式 nohup python slave.py -H http://ip:port -t 监测时间间隔(秒) -n slavename &
+slave节点启动方式 nohup python3 slave_monitor.py -H http://ip:port -t 监测时间间隔(秒) -n slavename &
 
 # master调用接口示例
 获得过去num小时的监测数据
