@@ -40,9 +40,7 @@ class Master:
             password=db_config['password'],
             database=db_config['database'],
             charset=db_config['charset']
-        )
-        self.yellow = float(monitor_config['yellow'])       
-        self.green = float(monitor_config['green'])              
+        )            
         self.block_time_len = int(monitor_config['block_len'])   
         self.rpc_version = 0
         self.code_version = 0
@@ -52,7 +50,7 @@ class Master:
     def update_config(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "select * from config"
+        sql = "select rpc_version,code_version from config"
         cursor.execute(sql)
         result = cursor.fetchone()
         conn.close()
@@ -63,7 +61,7 @@ class Master:
     def clean(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "delete from detect where detect_time < curdate()  - INTERVAL 3 day"
+        sql = "delete from detect where detect_time < curdate()  - INTERVAL 30 hour"
         cursor.execute(sql)
         conn.commit()
         conn.close()
@@ -72,25 +70,29 @@ class Master:
     def get_config(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "SELECT * from rpc"
+        sql = "SELECT url,chain from rpc"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
         rpcs = []
+        chains = []
         for i in result:
             rpcs.append(i[0])
-        return {"rpc":rpcs, "rpc_version": self.rpc_version, "code_version":self.code_version}
+            chains.append(i[1])
+        return {"rpc":rpcs,"chain":chains, "rpc_version": self.rpc_version, "code_version":self.code_version}
 
     def get_private(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "SELECT url,register,name,location,free,price,support,main_use from rpc where type='private'"
+        sql = "SELECT url,register,name,location,free,price,support,main_use,chain from rpc where type='private'"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
-        data = []
+        data = {}
         for i in result:
-            data.append({"url":i[0],"register":i[1],"name":i[2],"location":i[3],"free":i[4],"price":i[5],"support":i[6],"main_use":i[7]})
+            if i[8] not in data.keys():
+                data[i[8]] = []
+            data[i[8]].append({"url":i[0],"register":i[1],"name":i[2],"location":i[3],"free":i[4],"price":i[5],"support":i[6],"main_use":i[7]})
         return data
 
     def recive_data(self,data,ip):
@@ -101,21 +103,26 @@ class Master:
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         for key in data['result'].keys():
+            chain = ''
+            if 'chain' not in data['result'][key]:
+                chain = 'Ethereum Mainnet'
+            else:
+                chain = data['result'][key]['chain']
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip) \
-                        values('%s','%s','%d','%f','%d','%d','%s','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"),ip)
+            sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) \
+                        values('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"),ip,chain)
             cursor.execute(sql)
         conn.commit()
         conn.close()
 
-    # 获取所有节点最近num个时间区块的监测结果
+    # 获取所有节点最近num小时的监测结果
     @lru_cache()
     def get_data(self,num,_ts):
         logging.info("query database data")
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         # 获取数据
-        sql = "SELECT rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by rpc_url, h, result order by rpc_url,h,result"
+        sql = "SELECT chain,rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by chain,rpc_url, h, result order by chain,rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
         rpc_sql = "SELECT url,type,register,name,location from rpc"
@@ -129,35 +136,50 @@ class Master:
         data = {}
         zero_cnt = -1
         last_url = ''
+        last_chain = ''
         for i in result:
-            if i[0] not in info.keys():
+            if i[1] not in info.keys():
                 continue
             if i[0] not in data.keys():
                 data[i[0]] = {}
-                if info[i[0]]["type"]=='private':
-                    data[i[0]] ["register"] = info[i[0]]["register"]
-                data[i[0]] ["type"] = info[i[0]]["type"]
-                data[i[0]] ["name"] = info[i[0]]["name"]
-                data[i[0]] ["location"] = info[i[0]]["location"]
-                data[i[0]]["fail"] = []
-            if len(data[i[0]]["fail"])>=num:
+            if i[1] not in data[i[0]].keys():
+                data[i[0]][i[1]] = {}
+                if info[i[1]]["type"]=='private':
+                    data[i[0]][i[1]]["register"] = info[i[1]]["register"]
+                data[i[0]][i[1]]["type"] = info[i[1]]["type"]
+                data[i[0]][i[1]]["name"] = info[i[1]]["name"]
+                data[i[0]][i[1]]["location"] = info[i[1]]["location"]
+                data[i[0]][i[1]]["url"] = i[1]
+                data[i[0]][i[1]]["detect"] = []
+            if len(data[i[0]][i[1]]["detect"])>=num:
                 continue
             # 防止全0漏一个
-            if last_url!=i[0] and zero_cnt!=-1:
-                data[last_url]["fail"].append(1.0)
-            last_url = i[0]
-            # 判断红黄绿
-            if i[2]==0:
+            if last_url!=i[1] and zero_cnt!=-1:
+                data[last_chain][last_url]["detect"].append(1.0)
+            last_url = i[1]
+            last_chain = i[0]
+            # 计算失败率
+            if i[3]==0:
                 if zero_cnt!=-1:
-                    data[i[0]]["fail"].append(1.0)
-                zero_cnt = i[3]
+                    data[i[0]][i[1]]["detect"].append(1.0)
+                zero_cnt = i[4]
             else:
-                data[i[0]]["fail"].append(round(zero_cnt/(zero_cnt+i[3]),4))
+                if zero_cnt==-1:
+                    zero_cnt = 0
+                data[i[0]][i[1]]["detect"].append(round(zero_cnt/(zero_cnt+i[4]),4))
                 zero_cnt = -1
-        for i in data:
-            if len(data[i]["fail"])<num:
-                data[i]["fail"].extend([None]*(num-len(data[i]["fail"])))
-        return data
+                
+        if zero_cnt!=-1:
+            data[last_chain][last_url]["detect"].append(1.0)
+
+        processed_data = {}
+        for i in data.keys():
+            processed_data[i] = []
+            for j in data[i].keys():
+                if len(data[i][j]["detect"])<num:
+                    data[i][j]["detect"].extend([None]*(num-len(data[i][j]["detect"])))
+                processed_data[i].append(data[i][j])
+        return processed_data
 
  
 app = Flask(__name__)
@@ -181,13 +203,7 @@ def recive():
 def get_data():
     try:
         num = request.args.get('num')
-        fail = master.get_data(int(num),int(int(time.time())/600))
-        data =[]
-        for key in fail:
-            if fail[key]['type']=='private':
-                data.append({"url":key,"type":fail[key]['type'],"register":fail[key]['register'],"name":fail[key]['name'],"location":fail[key]['location'],"detect":fail[key]['fail']})
-            else:
-                data.append({"url":key,"type":fail[key]['type'],"name":fail[key]['name'],"location":fail[key]['location'],"detect":fail[key]['fail']})
+        data = master.get_data(int(num),int(int(time.time())/600))
         return {"status":"ok","data":data}
     except Exception as err:
         logging.info(traceback.format_exc())
