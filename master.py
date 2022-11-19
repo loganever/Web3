@@ -11,6 +11,7 @@ import traceback
 from optparse import OptionParser
 from DBUtils.PooledDB import PooledDB, SharedDBConnection
 from functools import lru_cache
+import threading
 
 # 日志设置
 logging.basicConfig(filename='master_log.txt', level=logging.INFO, format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
@@ -43,14 +44,26 @@ class Master:
         self.yellow = float(monitor_config['yellow'])       
         self.green = float(monitor_config['green'])              
         self.block_time_len = int(monitor_config['block_len'])   
-        self.version = 0
+        self.rpc_version = 0
+        self.code_version = 0
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
+
+    def update_config(self):
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
+        sql = "select * from config"
+        cursor.execute(sql)
+        result = cursor.fetchone()
+        conn.close()
+        self.rpc_version = int(result[0])
+        self.code_version = int(result[1])
+        return {"rpc_version":self.rpc_version,"code_version":self.code_version}
 
     def clean(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "delete from detect where detect_time < curdate()  - INTERVAL 5 day"
+        sql = "delete from detect where detect_time < curdate()  - INTERVAL 3 day"
         cursor.execute(sql)
         conn.commit()
         conn.close()
@@ -63,13 +76,10 @@ class Master:
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
-        # 清理表
-        if time.time()-self.last_clean > self.clean_time:
-            self.clean()
         rpcs = []
         for i in result:
             rpcs.append(i[0])
-        return {"rpc":rpcs, "version": self.version}
+        return {"rpc":rpcs, "rpc_version": self.rpc_version, "code_version":self.code_version}
 
     def get_private(self):
         conn = self.db_pool.connection()
@@ -84,6 +94,10 @@ class Master:
         return data
 
     def recive_data(self,data,ip):
+        # 清理表
+        if time.time()-self.last_clean > self.clean_time:
+            thread = threading.Thread(target=self.clean)
+            thread.start()  
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         for key in data['result'].keys():
@@ -125,33 +139,32 @@ class Master:
                 data[i[0]] ["type"] = info[i[0]]["type"]
                 data[i[0]] ["name"] = info[i[0]]["name"]
                 data[i[0]] ["location"] = info[i[0]]["location"]
-                data[i[0]]["color"] = []
-            if len(data[i[0]]["color"])>=num:
+                data[i[0]]["fail"] = []
+            if len(data[i[0]]["fail"])>=num:
                 continue
-            # 防止全red的情况漏一个
+            # 防止全0漏一个
             if last_url!=i[0] and zero_cnt!=-1:
-                data[last_url]["color"].append('red')
+                data[last_url]["fail"].append(1.0)
             last_url = i[0]
             # 判断红黄绿
             if i[2]==0:
                 if zero_cnt!=-1:
-                    data[i[0]]["color"].append('red')
+                    data[i[0]]["fail"].append(1.0)
                 zero_cnt = i[3]
             else:
-                if zero_cnt/(zero_cnt+i[3])<=self.green:
-                    data[i[0]]["color"].append('green')
-                elif zero_cnt/(zero_cnt+i[3])<=self.yellow:
-                    data[i[0]]["color"].append('yellow')
-                else:
-                    data[i[0]]["color"].append('red')
+                data[i[0]]["fail"].append(round(zero_cnt/(zero_cnt+i[3]),4))
                 zero_cnt = -1
         for i in data:
-            if len(data[i]["color"])<num:          # 监测数据不足则填充null
-                data[i]["color"].extend(['null']*(num-len(data[i]["color"])))
+            if len(data[i]["fail"])<num:
+                data[i]["fail"].extend([None]*(num-len(data[i]["fail"])))
         return data
 
  
 app = Flask(__name__)
+
+@app.route("/update",methods=["GET"])
+def update(): 
+    return master.update_config()
  
 @app.route("/config",methods=["GET"])
 def config(): 
@@ -162,19 +175,19 @@ def recive():
     data = dict(request.json)
     ip = request.remote_addr
     master.recive_data({"result":data['result'], "newest":data['newest']},ip)
-    return {"status":"ok","version":master.version}
+    return {"status":"ok","rpc_version":master.rpc_version,"code_version":master.code_version}
 
 @app.route("/get_data",methods=["GET"]) 
 def get_data():
     try:
         num = request.args.get('num')
-        color = master.get_data(int(num),int(int(time.time())/600))
+        fail = master.get_data(int(num),int(int(time.time())/600))
         data =[]
-        for key in color:
-            if color[key]['type']=='private':
-                data.append({"url":key,"type":color[key]['type'],"register":color[key]['register'],"name":color[key]['name'],"location":color[key]['location'],"detect":color[key]['color']})
+        for key in fail:
+            if fail[key]['type']=='private':
+                data.append({"url":key,"type":fail[key]['type'],"register":fail[key]['register'],"name":fail[key]['name'],"location":fail[key]['location'],"detect":fail[key]['fail']})
             else:
-                data.append({"url":key,"type":color[key]['type'],"name":color[key]['name'],"location":color[key]['location'],"detect":color[key]['color']})
+                data.append({"url":key,"type":fail[key]['type'],"name":fail[key]['name'],"location":fail[key]['location'],"detect":fail[key]['fail']})
         return {"status":"ok","data":data}
     except Exception as err:
         logging.info(traceback.format_exc())
@@ -188,10 +201,6 @@ def get_private():
         logging.info(traceback.format_exc())
         return {"status":"fail"}
 
-# @app.route("/add_rpc",methods=["POST"])
-# def add_rpc():
-#     master.add_rpc(json.loads(request.data.decode())['rpcs'])
-#     return "ok"
  
 if __name__ == "__main__":
     parser = OptionParser()
