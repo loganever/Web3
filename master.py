@@ -78,18 +78,18 @@ class Master:
                 payloads.append(i[2])
         return {"rpc":rpcs,"chain":chains,"payload":payloads,"rpc_version": self.rpc_version, "code_version":self.code_version}
 
-    def get_private(self):
+    def get_rpc_info(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "SELECT url,register,name,location,free,price,support,main_use,chain from rpc where type='private'"
+        sql = "SELECT DISTINCT register,name,location,free,price,support,main_use,chain from rpc where free is not null"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
         data = {}
         for i in result:
-            if i[8] not in data.keys():
-                data[i[8]] = []
-            data[i[8]].append({"url":i[0],"register":i[1],"name":i[2],"location":i[3],"free":i[4],"price":i[5],"support":i[6],"main_use":i[7]})
+            if i[7] not in data.keys():
+                data[i[7]] = []
+            data[i[7]].append({"register":i[0],"name":i[1],"location":i[2],"free":i[3],"price":i[4],"support":i[5],"main_use":i[6]})
         return data
 
     def recive_data(self,data,ip):
@@ -104,7 +104,7 @@ class Master:
             text = data['result'][key]['text'].replace("'","\\'")
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             if chain=="Polygon Mainnet":
-                result = abs(data['result'][key]['block']-data['newest'])<=2
+                result = abs(data['result'][key]['block']-data['newest'])<=3
             else:
                 result = data['result'][key]['block']==data['newest']
             sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) \
@@ -214,9 +214,9 @@ def get_data():
 @app.route("/get_private",methods=["GET"]) 
 def get_private():
     try:
-        return {"status":"ok","data":master.get_private()}
+        return {"status":"ok","data":master.get_rpc_info()}
     except Exception as err:
-        logging.info(traceback.format_exc())
+        logging.info(err)
         return {"status":"fail"}
 
  
