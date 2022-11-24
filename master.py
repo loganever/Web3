@@ -19,7 +19,7 @@ class Master:
 
     def __init__(self):
         self.db_pool = PooledDB(creator=pymysql,
-            maxconnections=0,
+            maxconnections=8,
             mincached=3,
             maxcached=0,
             maxshared=1,
@@ -73,7 +73,7 @@ class Master:
             rpcs.append(i[0])
             chains.append(i[1])
             if i[0]=='https://polygon-rpc.com':
-                payloads.append('{"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}')
+                payloads.append('{"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest",false], "id": 1}')
             else:
                 payloads.append(i[2])
         return {"rpc":rpcs,"chain":chains,"payload":payloads,"rpc_version": self.rpc_version, "code_version":self.code_version}
@@ -101,9 +101,14 @@ class Master:
         cursor = conn.cursor()
         for key in data['result'].keys():
             chain = data['result'][key]['chain']
+            text = data['result'][key]['text'].replace("'","\\'")
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if chain=="Polygon Mainnet":
+                result = abs(data['result'][key]['block']-data['newest'])<=2
+            else:
+                result = data['result'][key]['block']==data['newest']
             sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) \
-                        values('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"),ip,chain)
+                        values('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')" % (key,dt,result,data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),text[:min(len(text),2000)],ip,chain)
             cursor.execute(sql)
         conn.commit()
         conn.close()
