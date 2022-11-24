@@ -13,7 +13,6 @@ from DBUtils.PooledDB import PooledDB, SharedDBConnection
 from functools import lru_cache
 import threading
 
-# 日志设置
 logging.basicConfig(filename='master_log.txt', level=logging.INFO, format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
 
 
@@ -21,19 +20,13 @@ class Master:
 
     def __init__(self):
         self.db_pool = PooledDB(creator=pymysql,
-            maxconnections=0,  # 连接池允许的最大连接数，0和None表示不限制连接数
-            mincached=3,  # 初始化时，链接池中至少创建的空闲的链接，0表示不创建
-            maxcached=0,  # 链接池中最多闲置的链接，0和None不限制
-            maxshared=1,  # 链接池中最多共享的链接数量，0和None表示全部共享
-            blocking=True,  # 连接池中如果没有可用连接后，是否阻塞等待。True，等待；False，不等待然后报错
-            maxusage=None,  # 一个链接最多被重复使用的次数，None表示无限制
+            maxconnections=0,
+            mincached=3,
+            maxcached=0,
+            maxshared=1,
+            blocking=True,
+            maxusage=None,
             ping=0,
-            # ping MySQL服务端，检查是否服务可用。
-            # 如：0 = None = never,
-            # 1 = default = whenever it is requested,
-            # 2 = when a cursor is created,
-            # 4 = when a query is executed,
-            # 7 = always
             host=db_config['host'],
             port=int(db_config['port']),
             user=db_config['user'],
@@ -98,7 +91,6 @@ class Master:
         return data
 
     def recive_data(self,data,ip):
-        # 清理表
         if time.time()-self.last_clean > self.clean_time:
             thread = threading.Thread(target=self.clean)
             thread.start()  
@@ -117,13 +109,11 @@ class Master:
         conn.commit()
         conn.close()
 
-    # 获取所有节点最近num小时的监测结果
     @lru_cache()
     def get_data(self,num,_ts):
         logging.info("query database data")
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        # 获取数据
         sql = "SELECT chain,rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by chain,rpc_url, h, result order by chain,rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
@@ -155,12 +145,12 @@ class Master:
                 data[i[0]][i[1]]["detect"] = []
             if len(data[i[0]][i[1]]["detect"])>=num:
                 continue
-            # 防止全0漏一个
+
             if last_url!=i[1] and zero_cnt!=-1:
                 data[last_chain][last_url]["detect"].append(1.0)
             last_url = i[1]
             last_chain = i[0]
-            # 计算失败率
+
             if i[3]==0:
                 if zero_cnt!=-1:
                     data[i[0]][i[1]]["detect"].append(1.0)
@@ -226,7 +216,6 @@ if __name__ == "__main__":
     (options, args) = parser.parse_args()
     file = options.config
 
-    #读取配置文件
     con = configparser.ConfigParser()
     con.read(file, encoding='utf-8')
 
@@ -235,4 +224,4 @@ if __name__ == "__main__":
     server_config = dict(con.items('server'))
 
     master = Master()
-    app.run(host='0.0.0.0', port=int(server_config['port'])) #运行app
+    app.run(host='0.0.0.0', port=int(server_config['port']))
