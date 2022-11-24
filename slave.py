@@ -50,8 +50,11 @@ class Slave:
         res_list = grequests.map(self.req_list[chain], exception_handler=self.err_handler)
         for res,req in zip(res_list,self.req_list[chain]):
             try:
-                resp = json.loads(res.text.strip())        
-                infura_block_number = int(resp['result'],16)   # 结果16进制转10进制
+                resp = json.loads(res.text.strip())
+                if req.url=='https://polygon-rpc.com':
+                    infura_block_number = int(resp['result']['number'],16)
+                else:
+                    infura_block_number = int(resp['result'],16)
                 self.result[req.url] = {"block":infura_block_number,"elapse":res.elapsed.total_seconds(),
                 "status_code":res.status_code,"headers":str(res.headers),"text":res.text.strip(),"chain":chain}
                 self.newest[chain] = max(self.newest[chain],self.result[req.url]['block'])
