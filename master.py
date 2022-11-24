@@ -7,7 +7,6 @@ import time
 from pymysql.cursors import DictCursor
 from flask import Flask, request
 import configparser
-import traceback
 from optparse import OptionParser
 from DBUtils.PooledDB import PooledDB, SharedDBConnection
 from functools import lru_cache
@@ -73,7 +72,10 @@ class Master:
         for i in result:
             rpcs.append(i[0])
             chains.append(i[1])
-            payloads.append(i[2])
+            if i[0]=='https://polygon-rpc.com':
+                payloads.append('{"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest", False], "id": 1}')
+            else:
+                payloads.append(i[2])
         return {"rpc":rpcs,"chain":chains,"payload":payloads,"rpc_version": self.rpc_version, "code_version":self.code_version}
 
     def get_private(self):
@@ -91,17 +93,14 @@ class Master:
         return data
 
     def recive_data(self,data,ip):
+        # 清理表
         if time.time()-self.last_clean > self.clean_time:
             thread = threading.Thread(target=self.clean)
             thread.start()  
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         for key in data['result'].keys():
-            chain = ''
-            if 'chain' not in data['result'][key]:
-                chain = 'Ethereum Mainnet'
-            else:
-                chain = data['result'][key]['chain']
+            chain = data['result'][key]['chain']
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) \
                         values('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')" % (key,dt,data['result'][key]['block']==data['newest'],data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),data['result'][key]['text'].replace("'","\\'"),ip,chain)
@@ -114,6 +113,7 @@ class Master:
         logging.info("query database data")
         conn = self.db_pool.connection()
         cursor = conn.cursor()
+        # 获取数据
         sql = "SELECT chain,rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by chain,rpc_url, h, result order by chain,rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
@@ -148,9 +148,10 @@ class Master:
 
             if last_url!=i[1] and zero_cnt!=-1:
                 data[last_chain][last_url]["detect"].append(1.0)
+                zero_cnt = -1
             last_url = i[1]
             last_chain = i[0]
-
+            # 计算失败率
             if i[3]==0:
                 if zero_cnt!=-1:
                     data[i[0]][i[1]]["detect"].append(1.0)
@@ -184,10 +185,14 @@ def update():
 def config(): 
     return master.get_config()
  
-@app.route("/recive",methods=["POST"]) 
+@app.route("/recive",methods=["POST"])
 def recive():
     data = dict(request.json)
     ip = request.remote_addr
+    if 'node_name' in data.keys():
+        logging.info(data['node_name'])
+    else:
+        logging.info(ip)
     master.recive_data({"result":data['result'], "newest":data['newest']},ip)
     return {"status":"ok","rpc_version":master.rpc_version,"code_version":master.code_version}
 
@@ -216,6 +221,7 @@ if __name__ == "__main__":
     (options, args) = parser.parse_args()
     file = options.config
 
+    #读取配置文件
     con = configparser.ConfigParser()
     con.read(file, encoding='utf-8')
 
@@ -224,4 +230,4 @@ if __name__ == "__main__":
     server_config = dict(con.items('server'))
 
     master = Master()
-    app.run(host='0.0.0.0', port=int(server_config['port']))
+    app.run(host='0.0.0.0', port=int(server_config['port'])) #运行app
