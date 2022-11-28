@@ -20,4 +20,4 @@ curl http://127.0.0.1:5000/get_data?num=24
 curl http://127.0.0.1:5000/config
 
 获得private节点信息
-curl http://127.0.0.1:5000/private
+curl http://127.0.0.1:5000/get_private
