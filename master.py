@@ -11,6 +11,7 @@ from optparse import OptionParser
 from DBUtils.PooledDB import PooledDB, SharedDBConnection
 from functools import lru_cache
 import threading
+from gevent import pywsgi
 
 logging.basicConfig(filename='master_log.txt', level=logging.INFO, format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
 
@@ -19,10 +20,10 @@ class Master:
 
     def __init__(self):
         self.db_pool = PooledDB(creator=pymysql,
-            maxconnections=8,
+            maxconnections=0,
             mincached=3,
             maxcached=0,
-            maxshared=1,
+            maxshared=3,
             blocking=True,
             maxusage=None,
             ping=0,
@@ -34,10 +35,20 @@ class Master:
             charset=db_config['charset']
         )            
         self.block_time_len = int(monitor_config['block_len'])   
-        self.rpc_version = 0
-        self.code_version = 0
+        self.rpc_version = 1
+        self.code_version = 1
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
+        conn = self.db_pool.connection()
+        cursor = conn.cursor()
+        sql = "select chain,block_diff from chain"
+        cursor.execute(sql)
+        result = cursor.fetchall()
+        conn.close()
+        self.chain_block_diff = {}
+        for i in result:
+            self.chain_block_diff[i[0]] = int(i[1])
+        logging.info(self.chain_block_diff)
 
     def update_config(self):
         conn = self.db_pool.connection()
@@ -53,7 +64,7 @@ class Master:
     def clean(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "delete from detect where detect_time < curdate()  - INTERVAL 30 hour"
+        sql = "delete from detect where detect_time < curdate()  - INTERVAL 25 hour"
         cursor.execute(sql)
         conn.commit()
         conn.close()
@@ -62,7 +73,7 @@ class Master:
     def get_config(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "SELECT rpc.url,rpc.chain,payload.payload from rpc,payload where rpc.chain=payload.chain"
+        sql = "SELECT rpc.url,rpc.chain,chain.payload from rpc,chain where rpc.chain=chain.chain"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
@@ -72,7 +83,7 @@ class Master:
         for i in result:
             rpcs.append(i[0])
             chains.append(i[1])
-            if i[0]=='https://polygon-rpc.com':
+            if i[0]=='https://polygon-rpc.com' or i[0]=='https://bscrpc.com':
                 payloads.append('{"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest",false], "id": 1}')
             else:
                 payloads.append(i[2])
@@ -99,17 +110,14 @@ class Master:
             thread.start()  
         conn = self.db_pool.connection()
         cursor = conn.cursor()
+        sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) values"
         for key in data['result'].keys():
             chain = data['result'][key]['chain']
             text = data['result'][key]['text'].replace("'","\\'")
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            if chain=="Polygon Mainnet":
-                result = abs(data['result'][key]['block']-data['newest'])<=3
-            else:
-                result = data['result'][key]['block']==data['newest']
-            sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) \
-                        values('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')" % (key,dt,result,data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),text[:min(len(text),2000)],ip,chain)
-            cursor.execute(sql)
+            result = abs(data['result'][key]['block']-data['newest'])<=self.chain_block_diff[chain]
+            sql+="('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')," % (key,dt,result,data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),text[:min(len(text),2000)],ip,chain)
+        cursor.execute(sql[:-1])
         conn.commit()
         conn.close()
 
@@ -187,7 +195,8 @@ def update():
     return master.update_config()
  
 @app.route("/config",methods=["GET"])
-def config(): 
+def config():
+    logging.info("get config")
     return master.get_config()
  
 @app.route("/recive",methods=["POST"])
@@ -235,4 +244,6 @@ if __name__ == "__main__":
     server_config = dict(con.items('server'))
 
     master = Master()
-    app.run(host='0.0.0.0', port=int(server_config['port'])) #运行app
+    server = pywsgi.WSGIServer(('0.0.0.0', int(server_config['port'])), app)
+    server.serve_forever()
+    # app.run(host='0.0.0.0', port=int(server_config['port'])) #运行app
