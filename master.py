@@ -35,7 +35,7 @@ class Master:
             charset=db_config['charset']
         )            
         self.block_time_len = int(monitor_config['block_len'])   
-        self.rpc_version = 1
+        self.rpc_version = 0
         self.code_version = 1
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
@@ -85,10 +85,7 @@ class Master:
         for i in result:
             rpcs.append(i[0])
             chains.append(i[1])
-            if i[0]=='https://polygon-rpc.com' or i[0]=='https://bscrpc.com':
-                payloads.append('{"jsonrpc": "2.0", "method": "eth_getBlockByNumber", "params": ["latest",false], "id": 1}')
-            else:
-                payloads.append(i[2])
+            payloads.append(i[2])
         return {"rpc":rpcs,"chain":chains,"payload":payloads,"rpc_version": self.rpc_version, "code_version":self.code_version}
 
     def get_rpc_info(self):
