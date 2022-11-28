@@ -51,10 +51,7 @@ class Slave:
         for res,req in zip(res_list,self.req_list[chain]):
             try:
                 resp = json.loads(res.text.strip())
-                if req.url=='https://polygon-rpc.com' or req.url=='https://bscrpc.com':
-                    infura_block_number = int(resp['result']['number'],16)
-                else:
-                    infura_block_number = int(resp['result'],16)
+                infura_block_number = int(resp['result']['number'],16)
                 self.result[req.url] = {"block":infura_block_number,"elapse":res.elapsed.total_seconds(),
                 "status_code":res.status_code,"headers":str(res.headers),"text":res.text.strip(),"chain":chain}
                 self.newest[chain] = max(self.newest[chain],self.result[req.url]['block'])
