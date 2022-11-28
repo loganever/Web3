@@ -66,6 +66,8 @@ class Master:
         cursor = conn.cursor()
         sql = "delete from detect where detect_time < curdate()  - INTERVAL 25 hour"
         cursor.execute(sql)
+        sql = "delete from Error where detect_time < curdate()  - INTERVAL 25 hour"
+        cursor.execute(sql)
         conn.commit()
         conn.close()
         self.last_clean = time.time()
@@ -110,14 +112,21 @@ class Master:
             thread.start()  
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "insert into detect(rpc_url,detect_time,result,elapse,block,status_code,headers,text,ip,chain) values"
+        sql = "insert into detect(rpc_url,detect_time,result,ip,chain) values"
+        error_sql = "insert into Error(rpc_url,detect_time,status_code,headers,text,ip,chain) values"
+        error_flag = False
         for key in data['result'].keys():
             chain = data['result'][key]['chain']
             text = data['result'][key]['text'].replace("'","\\'")
             dt=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             result = abs(data['result'][key]['block']-data['newest'])<=self.chain_block_diff[chain]
-            sql+="('%s','%s','%d','%f','%d','%d','%s','%s','%s','%s')," % (key,dt,result,data['result'][key]['elapse'],data['result'][key]['block'],data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),text[:min(len(text),2000)],ip,chain)
+            sql+="('%s','%s','%d','%s','%s')," % (key,dt,result,ip,chain)
+            if result==False:
+                error_flag = True
+                error_sql+="('%s','%s','%d','%s','%s','%s','%s')," % (key,dt,data['result'][key]['status_code'],data['result'][key]['headers'].replace("'","\\'"),text[:min(len(text),2000)],ip,chain)
         cursor.execute(sql[:-1])
+        if error_flag:
+            cursor.execute(error_sql[:-1])
         conn.commit()
         conn.close()
 
@@ -127,7 +136,7 @@ class Master:
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         # 获取数据
-        sql = "SELECT chain,rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(*) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by chain,rpc_url, h, result order by chain,rpc_url,h,result"
+        sql = "SELECT chain,rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(rpc_url) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by chain,rpc_url, h, result order by chain,rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
         rpc_sql = "SELECT url,type,register,name,location from rpc"
