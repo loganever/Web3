@@ -35,8 +35,8 @@ class Master:
             charset=db_config['charset']
         )            
         self.block_time_len = int(monitor_config['block_len'])   
-        self.rpc_version = 0
-        self.code_version = 1
+        self.rpc_version = 1
+        self.code_version = 0
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
         conn = self.db_pool.connection()
@@ -62,15 +62,20 @@ class Master:
         return {"rpc_version":self.rpc_version,"code_version":self.code_version}
 
     def clean(self):
-        conn = self.db_pool.connection()
-        cursor = conn.cursor()
-        sql = "delete from detect where detect_time < curdate()  - INTERVAL 25 hour"
-        cursor.execute(sql)
-        sql = "delete from Error where detect_time < curdate()  - INTERVAL 25 hour"
-        cursor.execute(sql)
-        conn.commit()
-        conn.close()
-        self.last_clean = time.time()
+        try:
+            conn = self.db_pool.connection()
+            cursor = conn.cursor()
+            sql = "delete from detect where detect_time < curdate()  - INTERVAL 25 hour"
+            cursor.execute(sql)
+            sql = "delete from Error where detect_time < curdate()  - INTERVAL 25 hour"
+            cursor.execute(sql)
+            conn.commit()
+            conn.close()
+            self.last_clean = time.time()
+            logging.info("clean ok")
+        except Exception as e:
+            logging.error(e)
+            logging.info("clean fail")
 
     def get_config(self):
         conn = self.db_pool.connection()
@@ -91,7 +96,7 @@ class Master:
     def get_rpc_info(self):
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "SELECT DISTINCT register,name,location,free,price,support,main_use,chain from rpc where free is not null"
+        sql = "SELECT DISTINCT register,name,location,free,price,support,main_use,chain,privacy from rpc where free is not null"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
@@ -99,7 +104,7 @@ class Master:
         for i in result:
             if i[7] not in data.keys():
                 data[i[7]] = []
-            data[i[7]].append({"register":i[0],"name":i[1],"location":i[2],"free":i[3],"price":i[4],"support":i[5],"main_use":i[6]})
+            data[i[7]].append({"register":i[0],"name":i[1],"location":i[2],"free":i[3],"price":i[4],"support":i[5],"main_use":i[6],"privacy":i[8]})
         return data
 
     def recive_data(self,data,ip):
@@ -136,14 +141,14 @@ class Master:
         sql = "SELECT chain,rpc_url,timestampdiff(Hour,detect_time,now()) as h,result,count(rpc_url) as cnt FROM detect WHERE detect_time > (now() - INTERVAL 24 Hour) group by chain,rpc_url, h, result order by chain,rpc_url,h,result"
         cursor.execute(sql)
         result = cursor.fetchall()
-        rpc_sql = "SELECT url,type,register,name,location from rpc"
+        rpc_sql = "SELECT url,type,register,name,location,privacy from rpc"
         cursor.execute(rpc_sql)
         rpcresult = cursor.fetchall()
         conn.close()
 
         info = {}
         for i in rpcresult:
-            info[i[0]] = {"type":i[1],"register":i[2],"name":i[3],"location":i[4]}
+            info[i[0]] = {"type":i[1],"register":i[2],"name":i[3],"location":i[4],"privacy":i[5]}
         data = {}
         zero_cnt = -1
         last_url = ''
@@ -160,6 +165,7 @@ class Master:
                 data[i[0]][i[1]]["type"] = info[i[1]]["type"]
                 data[i[0]][i[1]]["name"] = info[i[1]]["name"]
                 data[i[0]][i[1]]["location"] = info[i[1]]["location"]
+                data[i[0]][i[1]]["privacy"] = info[i[1]]["privacy"]
                 data[i[0]][i[1]]["url"] = i[1]
                 data[i[0]][i[1]]["detect"] = []
             if len(data[i[0]][i[1]]["detect"])>=num:
