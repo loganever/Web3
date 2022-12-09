@@ -39,16 +39,24 @@ class Master:
         self.code_version = 0
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
+
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         sql = "select chain,block_diff from chain"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
+
         self.chain_block_diff = {}
         for i in result:
             self.chain_block_diff[i[0]] = int(i[1])
+
         logging.info(self.chain_block_diff)
+
+        self.data = {}
+        self.get_data()
+        self.last_data = time.time()
+        self.data_time = int(monitor_config['data_time'])
 
     def update_config(self):
         conn = self.db_pool.connection()
@@ -71,7 +79,6 @@ class Master:
             cursor.execute(sql)
             conn.commit()
             conn.close()
-            self.last_clean = time.time()
             logging.info("clean ok")
         except Exception as e:
             logging.error(e)
@@ -110,7 +117,13 @@ class Master:
     def recive_data(self,data,ip):
         # 清理表
         if time.time()-self.last_clean > self.clean_time:
+            self.last_clean = time.time()
             thread = threading.Thread(target=self.clean)
+            thread.start()  
+        # 请求数据
+        if time.time()-self.last_data > self.data_time:
+            self.last_data = time.time()
+            thread = threading.Thread(target=self.get_data)
             thread.start()  
         conn = self.db_pool.connection()
         cursor = conn.cursor()
@@ -132,9 +145,9 @@ class Master:
         conn.commit()
         conn.close()
 
-    @lru_cache()
-    def get_data(self,num,_ts):
-        logging.info("query database data")
+    def get_data(self):
+        logging.info("query database data "+str(time.time()))
+        num = 24
         conn = self.db_pool.connection()
         cursor = conn.cursor()
         # 获取数据
@@ -197,7 +210,9 @@ class Master:
                 if len(data[i][j]["detect"])<num:
                     data[i][j]["detect"].extend([None]*(num-len(data[i][j]["detect"])))
                 processed_data[i].append(data[i][j])
-        return processed_data
+
+        self.data = processed_data
+        logging.info("data updated")
 
  
 app = Flask(__name__)
@@ -225,9 +240,7 @@ def recive():
 @app.route("/get_data",methods=["GET"]) 
 def get_data():
     try:
-        num = request.args.get('num')
-        data = master.get_data(int(num),int(int(time.time())/600))
-        return {"status":"ok","data":data}
+        return {"status":"ok","data":master.data}
     except Exception as err:
         logging.info(traceback.format_exc())
         return {"status":"fail"}
