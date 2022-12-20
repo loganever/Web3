@@ -35,21 +35,29 @@ class Master:
             charset=db_config['charset']
         )            
         self.block_time_len = int(monitor_config['block_len'])   
-        self.rpc_version = 1
+        self.rpc_version = 0
         self.code_version = 0
         self.last_clean = time.time()
         self.clean_time = int(monitor_config['clean_time']) 
 
         conn = self.db_pool.connection()
         cursor = conn.cursor()
-        sql = "select chain,block_diff from chain"
+        sql = "select chain,block_diff,chain_id,native_currency_symbol,native_currency_decimals,block_explorer,native_currency_name from chain"
         cursor.execute(sql)
         result = cursor.fetchall()
         conn.close()
 
         self.chain_block_diff = {}
+        self.chain_info = {}
         for i in result:
             self.chain_block_diff[i[0]] = int(i[1])
+            self.chain_info[i[0]] = {}
+            self.chain_info[i[0]]['chain_id'] = int(i[2])
+            self.chain_info[i[0]]['native_currency_symbol'] = i[3]
+            self.chain_info[i[0]]['native_currency_decimals'] = int(i[4])
+            self.chain_info[i[0]]['block_explorer'] = i[5]
+            self.chain_info[i[0]]['native_currency_name'] = i[6]
+
 
         logging.info(self.chain_block_diff)
 
@@ -240,7 +248,7 @@ def recive():
 @app.route("/get_data",methods=["GET"]) 
 def get_data():
     try:
-        return {"status":"ok","data":master.data}
+        return {"status":"ok","data":master.data,"chain":master.chain_info}
     except Exception as err:
         logging.info(traceback.format_exc())
         return {"status":"fail"}
